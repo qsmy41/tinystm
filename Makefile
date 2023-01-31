@@ -291,6 +291,9 @@ $(SRCDIR)/stm.o:	$(SRCDIR)/stm_internal.h $(SRCDIR)/stm_wt.h $(SRCDIR)/stm_wbetl
 %.o.c:	%.c Makefile
 	$(UNIFDEF) $(D) $< > $@ || true
 
+%.o.h:	%.h Makefile
+	$(UNIFDEF) $(D) $< > $@ || true
+
 $(TMLIB):	$(SRCDIR)/$(TM).o $(SRCDIR)/wrappers.o $(GC) $(MODULES)
 	$(AR) crus $@ $^
 

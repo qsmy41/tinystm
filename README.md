@@ -51,3 +51,32 @@ ACKNOWLEDGEMENT
 
 This library was supported by the European research consortium
 [VELOX](http://www.velox-project.eu).
+
+Complementary Information
+=========================
+
+Acronyms
+--------
+* ab: atomic blocks
+* cb: callback
+* cm: contention manager ("CM\_MODULAR")
+* nb: number
+* wb: write-back
+* wt: wrtie-through
+* etl: encounter-time locking
+* ctl: commit-time locking
+
+Codebase Overview (in `src/`)
+-----------------
+* `atomic ops/`: atomic operations implemented in different assembly for
+  different platforms.
+* `atomic.h`: header file to define macros for atomic operations, either
+  built-in or custom definitions (in `atomic ops/`)
+* `gc.*`: garbage collector definitions, epoch-based (see `epoch_gc` macro
+  defined in `Makefile`)
+* `mod_*.c`: custom implementations for ab, cm, print, etc.
+* `stm.c`: implementation of `stm.h`
+* `stm_*.h`: different flavors of STM implementations
+* `tls.h`: thread-local support functions
+* `utils.h`: different custom operations on memory
+* `wrappers.c`: different STM wrapper functions

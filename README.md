@@ -80,3 +80,41 @@ Codebase Overview (in `src/`)
 * `tls.h`: thread-local support functions
 * `utils.h`: different custom operations on memory
 * `wrappers.c`: different STM wrapper functions
+
+Notes
+-----
+The following notes may *not* be applicable for flavors other than `wbetl`.
+* `atomic_load_acquire(lock)` only get the reference of the lock. 
+  It does not *lock* or *own* the lock.
+* `likely()` and `unlikely()` functions are to provide compiler with branch
+  prediction information, if there is any branch prediction support from the
+  architecture
+* Transactional read does not lock; transactional write locks and only
+  release the locks after committing
+
+Q&A with Scenarios
+--------
+1. *version* of a lock is used to check if the latest value is read/written.
+
+    Consider the following scenario: Say a transaction Tx1 starts very
+    early, followed by Tx2 and Tx3 in this order. Tx2 modify `x`, Tx3 modify
+    `y`, Tx1 first reads `y`, then reads `x`. Say Tx2 and Tx3 finishes
+    earlier than Tx1 starting to read `y`. As such, Tx1 needs to update its
+    latest version (`stm_wbetl_extend`). Next, Tx1 reads `x`.
+    Will Tx1 get a lock with an older version of the lock updated by Tx2?
+
+    No. Because Tx2 finishes earlier than Tx3,
+    and Tx1 is extended to have the version of Tx3,
+    and read `x` happens after read `y`,
+    Tx1 is guaranteed to have the latest version (lock),
+    thus `!(version > tx->end)`.
+
+1. `stm_wbetl_read_invisible`.
+
+    Consider the following scenario: Tx1 reads `x`, Tx2 writes to `x`. Tx1
+    happens *after* Tx2. But according to implementation, if Tx1 starts first,
+    reads `x` first, but did not commit until Tx2 committed. Shouldn't Tx1 be
+    aborted?
+
+    Yes. This "validation" happens at commit time, conducted by `stm_wbetl_validate`.
+

@@ -92,7 +92,7 @@ The following notes may *not* be applicable for flavors other than `wbetl`.
 * Transactional read does not lock; transactional write locks and only
   release the locks after committing
 
-Q&A with Scenarios
+Q&A with Scenarios (`wbetl`)
 --------
 1. *version* of a lock is used to check if the latest value is read/written.
 
@@ -117,4 +117,29 @@ Q&A with Scenarios
     aborted?
 
     Yes. This "validation" happens at commit time, conducted by `stm_wbetl_validate`.
+
+Code extension (`wbetl`)
+------------------------
+1. `stm_internal.h`
+    
+    1. add a boolean flag in `w_entry` to indicate if it is a durable event
+
+    1. modify `stm_write()` to add an argument for indicating persistency
+
+1. `atomic.h`
+
+    define macro for persisting writes
+
+1. `stm.h` and `stm.c`
+
+    define `stm_persist()` and `stm_persist_tx` functions to persist writes
+
+1. `stm_wbetl.h`
+
+    1. modify `stm_wbetl_write()` to allow adding *persistent* write sets
+        * I should also move the latest write to the end of the write set of
+          that transaction, to guarantee the strict ordering of write?
+
+    1. modify `stm_wbetl_commit()` to not only store but also persist the
+       durable events
 

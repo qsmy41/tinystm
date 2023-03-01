@@ -83,7 +83,7 @@ Codebase Overview (in `src/`)
 
 Notes
 -----
-The following notes may *not* be applicable for flavors other than `wbetl`.
+N.B. The following notes may *not* be applicable for flavors other than `wbetl`.
 * `atomic_load_acquire(lock)` only get the reference of the lock. 
   It does not *lock* or *own* the lock.
 * `likely()` and `unlikely()` functions are to provide compiler with branch
@@ -91,6 +91,36 @@ The following notes may *not* be applicable for flavors other than `wbetl`.
   architecture
 * Transactional read does not lock; transactional write locks and only
   release the locks after committing
+* `mask` is used for identifying the bits that the word
+  must be updated. The value to be stored may not use up the entire word.
+  As such, by default its value is `~(stm_word_t) 0`.
+* `stm_tx_t`'s `start` and `end` properties:
+
+  `start` is checked against global clock to see if there are
+  other concurrent transactions committed before the current transaction
+  commits.
+
+  `end` ensures that a transaction reads from the latest
+  committed write.
+  It is checked against the lock's timestamp. Lock's timestamp being larger
+  than transaction's `end` means that a write operation in a concurrent
+  transaction has been committed to that memory. 
+
+    * In `read`, if all the other reads
+      locations' locks are owned by the transaction, and they are reading from the
+      latest version (`stm_wbetl_validate()`), we can extend the transaction's
+      timestamp and proceed, otherwise abort.
+
+    * In `write`, it additionally checks if current transaction has previously
+      read from the same location. If it does, abort immediately. 
+      
+      **Question**: What if reading the old value is intentional? e.g. 
+      ```
+      a = x;
+      x = 1;
+      ```
+      Given the above transaction, it may be desired to read `a=0` instead of
+      `a=1`.
 
 Q&A with Scenarios (`wbetl`)
 --------
@@ -118,28 +148,4 @@ Q&A with Scenarios (`wbetl`)
 
     Yes. This "validation" happens at commit time, conducted by `stm_wbetl_validate`.
 
-Code extension (`wbetl`)
-------------------------
-1. `stm_internal.h`
-    
-    1. add a boolean flag in `w_entry` to indicate if it is a durable event
-
-    1. modify `stm_write()` to add an argument for indicating persistency
-
-1. `atomic.h`
-
-    define macro for persisting writes
-
-1. `stm.h` and `stm.c`
-
-    define `stm_persist()` and `stm_persist_tx` functions to persist writes
-
-1. `stm_wbetl.h`
-
-    1. modify `stm_wbetl_write()` to allow adding *persistent* write sets
-        * I should also move the latest write to the end of the write set of
-          that transaction, to guarantee the strict ordering of write?
-
-    1. modify `stm_wbetl_commit()` to not only store but also persist the
-       durable events
 

@@ -142,7 +142,6 @@ stm_wbetl_read_invisible(stm_tx_t *tx, volatile stm_word_t *addr)
   if (unlikely(LOCK_GET_WRITE(l))) {
     /* Locked */
     /* Do we own the lock? */
-    // if tx owns the write lock on the memory addr, find the latest write value and return it
     w = (w_entry_t *)LOCK_GET_ADDR(l);
     /* Simply check if address falls inside our write set (avoids non-faulting load) */
     if (likely(tx->w_set.entries <= w && w < tx->w_set.entries + tx->w_set.nb_entries)) {
@@ -153,7 +152,6 @@ stm_wbetl_read_invisible(stm_tx_t *tx, volatile stm_word_t *addr)
           value = (w->mask == 0 ? ATOMIC_LOAD(addr) : w->value);
           break;
         }
-        // why do we need the following?
         if (w->next == NULL) {
           /* No: get value from memory */
           value = ATOMIC_LOAD(addr);
@@ -167,30 +165,17 @@ stm_wbetl_read_invisible(stm_tx_t *tx, volatile stm_word_t *addr)
 
 
     /* Conflict: CM kicks in (we could also check for duplicate reads and get value from read set) */
-# if defined(IRREVOCABLE_ENABLED) && defined(IRREVOCABLE_IMPROVED)
-    if (tx->irrevocable && ATOMIC_LOAD(&_tinystm.irrevocable) == 1)
-      ATOMIC_STORE(&_tinystm.irrevocable, 2);
-# endif /* defined(IRREVOCABLE_ENABLED) && defined(IRREVOCABLE_IMPROVED) */
-    if (unlikely(tx->irrevocable)) {
-      /* Spin while locked */
-      goto restart;
-    }
-    // if tx does not own the write lock, "conflicting access", thus abort
     /* Abort */
     stm_rollback(tx, STM_ABORT_RW_CONFLICT);
     return 0;
   } else {
     /* Not locked */
-    // why do we need the following?
     value = ATOMIC_LOAD_ACQ(addr);
     l2 = ATOMIC_LOAD_ACQ(lock);
     if (unlikely(l != l2)) {
       l = l2;
       goto restart_no_load;
     }
-    /* In irrevocable mode, no need check timestamp nor add entry to read set */
-    if (unlikely(tx->irrevocable))
-      goto return_value;
     /* Check timestamp */
     version = LOCK_GET_TIMESTAMP(l);
     /* Valid version? */
@@ -272,7 +257,6 @@ stm_wbetl_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_w
           if (mask != ~(stm_word_t)0) {
             if (prev->mask == 0)
               prev->value = ATOMIC_LOAD(addr);
-            // overwrite prev->value's bits whose corresponding mask val is 1
             value = (prev->value & ~mask) | (value & mask);
           }
           prev->value = value;
@@ -289,21 +273,11 @@ stm_wbetl_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_w
       version = prev->version;
       /* Must add to write set */
       if (tx->w_set.nb_entries == tx->w_set.size)
-        // how does the following "abort the transaction"
-        // and subsequently restart the transaction?
         stm_rollback(tx, STM_ABORT_EXTEND_WS);
       w = &tx->w_set.entries[tx->w_set.nb_entries];
       goto do_write;
     }
     /* Conflict: CM kicks in */
-#if defined(IRREVOCABLE_ENABLED) && defined(IRREVOCABLE_IMPROVED)
-    if (tx->irrevocable && ATOMIC_LOAD(&_tinystm.irrevocable) == 1)
-      ATOMIC_STORE(&_tinystm.irrevocable, 2);
-#endif /* defined(IRREVOCABLE_ENABLED) && defined(IRREVOCABLE_IMPROVED) */
-    if (tx->irrevocable) {
-      /* Spin while locked */
-      goto restart;
-    }
     /* Abort */
     stm_rollback(tx, STM_ABORT_WW_CONFLICT);
     return NULL;
@@ -311,9 +285,6 @@ stm_wbetl_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_w
   /* Not locked */
   /* Handle write after reads (before CAS) */
   version = LOCK_GET_TIMESTAMP(l);
-  /* In irrevocable mode, no need to revalidate */
-  if (unlikely(tx->irrevocable))
-    goto acquire_no_check;
  acquire:
   if (unlikely(version > tx->end)) {
     /* We might have read an older version previously */
@@ -325,7 +296,6 @@ stm_wbetl_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_w
     }
   }
   /* Acquire lock (ETL) */
- acquire_no_check:
   if (unlikely(tx->w_set.nb_entries == tx->w_set.size))
     stm_rollback(tx, STM_ABORT_EXTEND_WS);
   w = &tx->w_set.entries[tx->w_set.nb_entries];
@@ -444,30 +414,9 @@ stm_wbetl_commit(stm_tx_t *tx)
 
 
   /* Update transaction */
-  /* Verify if there is an irrevocable transaction once all locks have been acquired */
-# ifdef IRREVOCABLE_IMPROVED
-  /* FIXME: it is bogus. the status should be changed to idle otherwise stm_quiesce will not progress */
-  if (unlikely(!tx->irrevocable)) {
-    do {
-      t = ATOMIC_LOAD(&_tinystm.irrevocable);
-      /* If the irrevocable transaction have encountered an acquired lock, abort */
-      if (t == 2) {
-        stm_rollback(tx, STM_ABORT_IRREVOCABLE);
-        return 0;
-      }
-    } while (t);
-  }
-# else /* ! IRREVOCABLE_IMPROVED */
-  if (!tx->irrevocable && ATOMIC_LOAD(&_tinystm.irrevocable)) {
-    stm_rollback(tx, STM_ABORT_IRREVOCABLE);
-    return 0;
-  }
-# endif /* ! IRREVOCABLE_IMPROVED */
 
   /* Get commit timestamp (may exceed VERSION_MAX by up to MAX_THREADS) */
   t = FETCH_INC_CLOCK + 1;
-  if (unlikely(tx->irrevocable))
-    goto release_locks;
 
   /* Try to validate (only if a concurrent transaction has committed since tx->start) */
   if (unlikely(tx->start != t - 1 && !stm_wbetl_validate(tx))) {
@@ -476,7 +425,6 @@ stm_wbetl_commit(stm_tx_t *tx)
     return 0;
   }
 
-  release_locks:
 
   /* Install new versions, drop locks and set new timestamp */
   w = tx->w_set.entries;
@@ -484,9 +432,6 @@ stm_wbetl_commit(stm_tx_t *tx)
     if (w->mask != 0)
       ATOMIC_STORE(w->addr, w->value);
     /* Only drop lock for last covered address in write set */
-    // it is possible to have >= 2 write sets covered by the same lock,
-    // so it is necessary to specify only release lock after storing all of them,
-    // i.e. release at the last write covered by the lock
     if (w->next == NULL) {
         ATOMIC_STORE_REL(w->lock, LOCK_SET_TIMESTAMP(t));
     }

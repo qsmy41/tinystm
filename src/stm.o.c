@@ -61,7 +61,6 @@ static const char *cm_names[] = {
 global_t _tinystm =
     { .nb_specific = 0
     , .initialized = 0
-    , .irrevocable = 0
     };
 
 /* ################################################################### *
@@ -648,64 +647,8 @@ stm_current_tx(void)
 static INLINE int
 int_stm_set_irrevocable(stm_tx_t *tx, int serial)
 {
-
-  if (!IS_ACTIVE(tx->status) && serial != -1) {
-    /* Request irrevocability outside of a transaction or in abort handler (for next execution) */
-    tx->irrevocable = 1 + (serial ? 0x08 : 0);
-    return 0;
-  }
-
-  /* Are we already in irrevocable mode? */
-  if ((tx->irrevocable & 0x07) == 3) {
-    return 1;
-  }
-
-  if (tx->irrevocable == 0) {
-    /* Acquire irrevocability for the first time */
-    tx->irrevocable = 1 + (serial ? 0x08 : 0);
-    /* Try acquiring global lock */
-    if (_tinystm.irrevocable == 1 || ATOMIC_CAS_FULL(&_tinystm.irrevocable, 0, 1) == 0) {
-      /* Transaction will acquire irrevocability after rollback */
-      stm_rollback(tx, STM_ABORT_IRREVOCABLE);
-      return 0;
-    }
-    /* Success: remember we have the lock */
-    tx->irrevocable++;
-    /* Try validating transaction */
-    if (!stm_wbetl_validate(tx)) {
-      stm_rollback(tx, STM_ABORT_VALIDATE);
-      return 0;
-    }
-
-    if (serial && tx->w_set.nb_entries != 0) {
-      /* TODO: or commit the transaction when we have the irrevocability. */
-      /* Don't mix transactional and direct accesses => restart with direct accesses */
-      stm_rollback(tx, STM_ABORT_IRREVOCABLE);
-      return 0;
-    }
-  } else if ((tx->irrevocable & 0x07) == 1) {
-    /* Acquire irrevocability after restart (no need to validate) */
-    while (_tinystm.irrevocable == 1 || ATOMIC_CAS_FULL(&_tinystm.irrevocable, 0, 1) == 0)
-      ;
-    /* Success: remember we have the lock */
-    tx->irrevocable++;
-  }
-  assert((tx->irrevocable & 0x07) == 2);
-
-  /* Are we in serial irrevocable mode? */
-  if ((tx->irrevocable & 0x08) != 0) {
-    /* Stop all other threads */
-    if (stm_quiesce(tx, 1) != 0) {
-      /* Another thread is quiescing and we are active (trying to acquire irrevocability) */
-      assert(serial != -1);
-      stm_rollback(tx, STM_ABORT_IRREVOCABLE);
-      return 0;
-    }
-  }
-
-  /* We are in irrevocable mode */
-  tx->irrevocable++;
-
+  fprintf(stderr, "Irrevocability is not supported in this configuration\n");
+  exit(-1);
   return 1;
 }
 

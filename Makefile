@@ -85,8 +85,8 @@ DEFINES += -DCM=CM_SUICIDE
 # compiler).
 ########################################################################
 
-DEFINES += -DIRREVOCABLE_ENABLED
-# DEFINES += -UIRREVOCABLE_ENABLED
+# DEFINES += -DIRREVOCABLE_ENABLED
+DEFINES += -UIRREVOCABLE_ENABLED
 
 ########################################################################
 # Maintain detailed internal statistics.  Statistics are stored in

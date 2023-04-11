@@ -245,7 +245,6 @@ typedef struct stm_tx {                 /* Transaction descriptor */
   stm_word_t end;                       /* End timestamp (validity range) */
   r_set_t r_set;                        /* Read set */
   w_set_t w_set;                        /* Write set */
-  unsigned int irrevocable:4;           /* Is this execution irrevocable? */
   unsigned int nesting;                 /* Nesting level */
   void *data[MAX_SPECIFIC];             /* Transaction-specific data (fixed-size array for better speed) */
   struct stm_tx *next;                  /* For keeping track of all transactional threads */
@@ -269,7 +268,6 @@ typedef struct {
   unsigned int nb_abort_cb;
   cb_entry_t abort_cb[MAX_CB];          /* Abort callbacks */
   unsigned int initialized;             /* Has the library been initialized? */
-  volatile stm_word_t irrevocable;      /* Irrevocability status */
   volatile stm_word_t quiesce;          /* Prevent threads from entering transactions upon quiescence */
   volatile stm_word_t threads_nb;       /* Number of active threads */
   stm_tx_t *threads;                    /* Head of linked list of threads */
@@ -465,12 +463,6 @@ stm_check_quiesce(stm_tx_t *tx)
   ATOMIC_CB;
 
   if (unlikely(ATOMIC_LOAD_ACQ(&_tinystm.quiesce) == 2)) {
-    /* Only test it when quiesce == 2, it avoids one comparison for fast-path. */
-    /* TODO check if it is correct. */
-    if (unlikely((tx->irrevocable & 0x08) != 0)) {
-      /* Serial irrevocable mode: we are executing alone */
-      return 0;
-    }
     s = ATOMIC_LOAD(&tx->status);
     SET_STATUS(tx->status, TX_IDLE);
     while (ATOMIC_LOAD_ACQ(&_tinystm.quiesce) == 2) {
@@ -619,12 +611,8 @@ int_stm_prepare(stm_tx_t *tx)
   }
 
 
-  if (unlikely(tx->irrevocable != 0)) {
-    assert(!IS_ACTIVE(tx->status));
-    stm_set_irrevocable_tx(tx, -1);
-    UPDATE_STATUS(tx->status, TX_IRREVOCABLE);
-  } else
-    UPDATE_STATUS(tx->status, TX_ACTIVE);
+  /* Set status */
+  UPDATE_STATUS(tx->status, TX_ACTIVE);
 
   stm_check_quiesce(tx);
 }
@@ -640,8 +628,6 @@ stm_rollback(stm_tx_t *tx, unsigned int reason)
 
   assert(IS_ACTIVE(tx->status));
 
-  /* Irrevocable cannot abort */
-  assert((tx->irrevocable & 0x07) != 3);
 
 
   stm_wbetl_rollback(tx);
@@ -679,10 +665,7 @@ stm_rollback(stm_tx_t *tx, unsigned int reason)
 
   /* Jump back to transaction start */
   /* Note: ABI usually requires 0x09 (runInstrumented+restoreLiveVariable) */
-  /* If the transaction is serial irrevocable, indicate that uninstrumented
-   * code path must be executed (mixing instrumented and uninstrumented
-   * accesses are not allowed) */
-  reason |= (tx->irrevocable == 0x0B) ? STM_PATH_UNINSTRUMENTED : STM_PATH_INSTRUMENTED;
+  reason |= STM_PATH_INSTRUMENTED;
   LONGJMP(tx->env, reason);
 }
 
@@ -774,7 +757,6 @@ int_stm_init_thread(void)
   tx->nesting = 0;
   /* Transaction-specific data */
   memset(tx->data, 0, MAX_SPECIFIC * sizeof(void *));
-  tx->irrevocable = 0;
   /* Store as thread-local data */
   tls_set_tx(tx);
   stm_quiesce_enter_thread(tx);
@@ -875,12 +857,6 @@ int_stm_commit(stm_tx_t *tx)
 
 
 
-  if (unlikely(tx->irrevocable)) {
-    ATOMIC_STORE(&_tinystm.irrevocable, 0);
-    if ((tx->irrevocable & 0x08) != 0)
-      stm_quiesce_release(tx);
-    tx->irrevocable = 0;
-  }
 
   /* Set status to COMMITTED */
   SET_STATUS(tx->status, TX_COMMITTED);
@@ -931,7 +907,7 @@ static INLINE int
 int_stm_irrevocable(stm_tx_t *tx)
 {
   assert (tx != NULL);
-  return ((tx->irrevocable & 0x07) == 3);
+  return 0;
 }
 
 static INLINE int
